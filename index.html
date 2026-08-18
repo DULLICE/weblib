@@ -262,6 +262,84 @@
 
   /* ============ 缓存图层(尺寸相关) ============ */
   let skyGrad = null, waterGrad = null, vignette = null, reflSrc = null;
+  let moonSprite = null, moonR = 0;
+
+  // 预渲染月面:基底 + 月海暗斑 + 环形山 + 球缘减光
+  function makeMoonSprite() {
+    moonR = Math.min(W, H) * 0.055;
+    const S = Math.max(64, Math.ceil(moonR * 2 * DPR));
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d");
+    const R = S / 2;
+
+    g.save();
+    g.beginPath();
+    g.arc(R, R, R, 0, Math.PI * 2);
+    g.clip();
+
+    // 基底:左上受光、向右下渐暗
+    const base = g.createRadialGradient(R * 0.75, R * 0.75, R * 0.1, R, R, R);
+    base.addColorStop(0, "rgba(252, 252, 240, 0.98)");
+    base.addColorStop(0.85, "rgba(232, 238, 216, 0.92)");
+    base.addColorStop(1, "rgba(214, 224, 196, 0.62)");
+    g.fillStyle = base;
+    g.fillRect(0, 0, S, S);
+
+    // 月海:大块柔边暗斑 [cx, cy, rx, ry, 旋转, 暗度]
+    const MARIA = [
+      [0.37, 0.30, 0.30, 0.21, -0.5, 0.24],
+      [0.63, 0.36, 0.22, 0.27,  0.4, 0.20],
+      [0.48, 0.62, 0.27, 0.17,  0.2, 0.18],
+      [0.73, 0.66, 0.14, 0.11, -0.3, 0.15],
+      [0.27, 0.55, 0.12, 0.10,  0.6, 0.14],
+    ];
+    for (const [x, y, rx, ry, rot, a] of MARIA) {
+      g.save();
+      g.translate(x * S, y * S);
+      g.rotate(rot);
+      g.scale(1, ry / rx);
+      const mg = g.createRadialGradient(0, 0, 0, 0, 0, rx * S);
+      mg.addColorStop(0, `rgba(146, 158, 138, ${a})`);
+      mg.addColorStop(0.65, `rgba(146, 158, 138, ${a * 0.55})`);
+      mg.addColorStop(1, "rgba(146, 158, 138, 0)");
+      g.fillStyle = mg;
+      g.beginPath();
+      g.arc(0, 0, rx * S, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+
+    // 环形山:小坑,内暗、缘微亮 [cx, cy, 半径]
+    const CRATERS = [
+      [0.55, 0.20, 0.050], [0.30, 0.42, 0.036], [0.68, 0.52, 0.052],
+      [0.42, 0.76, 0.042], [0.61, 0.80, 0.028], [0.79, 0.32, 0.034],
+      [0.22, 0.70, 0.026], [0.47, 0.44, 0.024], [0.84, 0.55, 0.022],
+    ];
+    for (const [x, y, r] of CRATERS) {
+      const cx = x * S, cy = y * S, cr = r * S;
+      const cg = g.createRadialGradient(cx - cr * 0.2, cy - cr * 0.2, cr * 0.05, cx, cy, cr);
+      cg.addColorStop(0, "rgba(134, 148, 128, 0.30)");
+      cg.addColorStop(0.72, "rgba(128, 142, 122, 0.18)");
+      cg.addColorStop(0.9, "rgba(255, 255, 244, 0.22)");
+      cg.addColorStop(1, "rgba(255, 255, 244, 0)");
+      g.fillStyle = cg;
+      g.beginPath();
+      g.arc(cx, cy, cr, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // 球缘减光:右下暗一点,增添球体感
+    const limb = g.createRadialGradient(R * 0.8, R * 0.8, R * 0.25, R, R, R);
+    limb.addColorStop(0, "rgba(88, 108, 88, 0)");
+    limb.addColorStop(0.8, "rgba(88, 108, 88, 0.05)");
+    limb.addColorStop(1, "rgba(66, 88, 76, 0.26)");
+    g.fillStyle = limb;
+    g.fillRect(0, 0, S, S);
+
+    g.restore();
+    return c;
+  }
 
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -295,6 +373,8 @@
     reflSrc.width = canvas.width;
     reflSrc.height = Math.round(HORIZON * DPR);
 
+    moonSprite = makeMoonSprite();
+
     initStars();
     initMists();
     initMotes();
@@ -322,7 +402,7 @@
     ctx.restore();
 
     // 明月与光晕
-    const mx = W * 0.70, my = H * 0.20, mr = Math.min(W, H) * 0.055;
+    const mx = W * 0.70, my = H * 0.20, mr = moonR;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     const halo = ctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 6);
@@ -331,16 +411,10 @@
     halo.addColorStop(1, "rgba(200, 226, 210, 0)");
     ctx.fillStyle = halo;
     ctx.fillRect(mx - mr * 6, my - mr * 6, mr * 12, mr * 12);
-
-    const moon = ctx.createRadialGradient(mx - mr * 0.25, my - mr * 0.25, mr * 0.1, mx, my, mr);
-    moon.addColorStop(0, "rgba(252, 252, 240, 0.98)");
-    moon.addColorStop(0.85, "rgba(232, 238, 216, 0.9)");
-    moon.addColorStop(1, "rgba(220, 230, 205, 0.55)");
-    ctx.fillStyle = moon;
-    ctx.beginPath();
-    ctx.arc(mx, my, mr, 0, Math.PI * 2);
-    ctx.fill();
     ctx.restore();
+
+    // 月面贴图(带月海与环形山的地形阴影)
+    ctx.drawImage(moonSprite, mx - mr, my - mr, mr * 2, mr * 2);
   }
 
   /* ============ 绘制:山峦 ============ */
