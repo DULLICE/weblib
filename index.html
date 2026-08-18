@@ -109,14 +109,16 @@
     x: -9999, y: -9999,       // 平滑后的位置
     tx: -9999, ty: -9999,     // 目标位置
     px: -9999, py: -9999,     // 上一帧位置(算速度)
-    activity: 0,              // 0~1,鼠标活跃度,静止后慢慢衰减
+    activity: 0,              // 0~1,鼠标活跃度(原始值,响应快,供燕雀受惊等用)
+    glow: 0,                  // 0~1,光影包络:activity 的缓动版,攻击/释放都平滑
+    presence: 0,              // 0~1,指针在场感:移入缓缓淡入,移出缓缓淡出
     inside: false,
   };
 
   function onPointer(x, y) {
     if (mouse.tx < -999) { mouse.x = x; mouse.y = y; mouse.px = x; mouse.py = y; }
     mouse.tx = x; mouse.ty = y;
-    mouse.activity = Math.min(1, mouse.activity + 0.14);
+    mouse.activity = Math.min(1, mouse.activity + 0.08);
     mouse.inside = true;
   }
   window.addEventListener("mousemove", e => onPointer(e.clientX, e.clientY));
@@ -386,9 +388,10 @@
         let wHalf = r.width * (0.04 + Math.pow(wn, 3.2) * 2.4);
 
         // 鼠标牵引:光带在指针附近向指针弯曲、变亮变宽
-        if (mouse.activity > 0.01 && mouse.inside) {
+        // 用缓动后的 glow 包络,弯曲会渐渐产生、渐渐消退,不会突变
+        if (mouse.glow > 0.004) {
           const dx = x - mouse.x;
-          const pull = mouse.activity * Math.exp(-(dx * dx) / twoSigma2);
+          const pull = mouse.glow * Math.exp(-(dx * dx) / twoSigma2);
           y += (mouse.y - y) * pull * 0.55;
           wHalf *= 1 + pull * 1.4;
         }
@@ -626,13 +629,24 @@
     mouse.y += (mouse.ty - mouse.y) * Math.min(1, 0.12 * d60);
     mouse.activity = Math.max(0, mouse.activity - 0.012 * d60);
 
+    // 光影包络:对活跃度做慢攻击、慢释放的缓动,鼠标骤动时光影也只会缓缓跟上
+    const act = mouse.inside ? mouse.activity : 0;
+    const gRate = act > mouse.glow ? 0.030 : 0.016;
+    mouse.glow += (act - mouse.glow) * Math.min(1, gRate * d60);
+
+    // 在场感:刚移入时约一秒内淡入,移出时缓缓淡出
+    const pTarget = mouse.inside ? 1 : 0;
+    const pRate = pTarget > mouse.presence ? 0.045 : 0.030;
+    mouse.presence += (pTarget - mouse.presence) * Math.min(1, pRate * d60);
+
     const vx = mouse.x - mouse.px, vy = mouse.y - mouse.py;
     const speed = Math.hypot(vx, vy);
     mouse.px = mouse.x; mouse.py = mouse.y;
 
-    // 依据移动速度撒出光尘
+    // 依据移动速度撒出光尘,数量随在场感淡入,刚移入时不会骤然成片
     if (mouse.inside && speed > 0.5 && trail.length < 160) {
-      const n = Math.min(4, 1 + (speed / 6) | 0);
+      const nf = Math.min(4, 1 + (speed / 6) | 0) * (0.2 + 0.8 * mouse.presence);
+      const n = Math.floor(nf) + (Math.random() < nf % 1 ? 1 : 0);
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
         const r = Math.random() * 10;
@@ -669,17 +683,17 @@
       ctx.drawImage(spriteForHue(p.hue), p.x - s / 2, p.y - s / 2, s, s);
     }
 
-    // 指针处的灵光(呼吸 + 变色 + 环绕光点)
-    if (mouse.inside && mouse.tx > -999) {
+    // 指针处的灵光(呼吸 + 变色 + 环绕光点),随在场感淡入淡出
+    if (mouse.presence > 0.01 && mouse.tx > -999) {
       const hue = (t * 26) % 360;
       const pulse = 0.85 + 0.3 * Math.sin(t * 2.2) + 0.25 * fbm(t * 0.7, 3.3, 2);
-      const R = 46 * pulse + mouse.activity * 26;
+      const R = (46 * pulse + mouse.glow * 26) * (0.55 + 0.45 * mouse.presence);
 
       const core = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, R);
       core.addColorStop(0, `hsla(${hue}, 90%, 88%, 0.85)`);
       core.addColorStop(0.25, `hsla(${hue}, 85%, 72%, 0.35)`);
       core.addColorStop(1, `hsla(${hue}, 80%, 60%, 0)`);
-      ctx.globalAlpha = 0.55 + mouse.activity * 0.45;
+      ctx.globalAlpha = (0.55 + mouse.glow * 0.45) * mouse.presence;
       ctx.fillStyle = core;
       ctx.beginPath();
       ctx.arc(mouse.x, mouse.y, R, 0, Math.PI * 2);
@@ -691,7 +705,7 @@
         const px = mouse.x + Math.cos(ang) * rr;
         const py = mouse.y + Math.sin(ang) * rr * 0.8;
         const s = 12 + 5 * Math.sin(t * 3 + k);
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = 0.7 * mouse.presence;
         ctx.drawImage(spriteForHue(hue + 90 * k), px - s / 2, py - s / 2, s, s);
       }
     }
