@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>九霄玄境 · 天地吐纳</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #06040f; cursor: none;
+  }
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .title {
+    position: fixed; top: 5.5%; left: 50%; transform: translateX(-50%);
+    text-align: center; pointer-events: none; user-select: none;
+    color: rgba(228, 240, 255, 0.94);
+    font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", "Songti SC", serif;
+    text-shadow: 0 0 24px rgba(120, 220, 200, 0.55), 0 0 60px rgba(160, 120, 255, 0.35);
+    animation: pulse 9s ease-in-out infinite;
+  }
+  .title h1 {
+    margin: 0; font-size: clamp(38px, 5.8vw, 82px); font-weight: 500;
+    letter-spacing: 0.55em; text-indent: 0.55em;
+  }
+  .title p {
+    margin: 0.6em 0 0; font-size: clamp(13px, 1.3vw, 19px);
+    letter-spacing: 0.65em; text-indent: 0.65em;
+    color: rgba(190, 220, 240, 0.58);
+    text-shadow: 0 0 14px rgba(100, 200, 220, 0.4);
+  }
+  .seal {
+    display: inline-block; margin-bottom: 0.4em;
+    padding: 0.15em 0.35em; font-size: 0.38em; letter-spacing: 0;
+    color: rgba(240, 248, 255, 0.95);
+    background: rgba(40, 120, 140, 0.75);
+    border: 1px solid rgba(120, 220, 210, 0.45);
+    border-radius: 3px; box-shadow: 0 0 18px rgba(80, 200, 200, 0.4);
+    text-shadow: none;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.86; }
+    50%      { opacity: 1; }
+  }
+  .nav {
+    position: fixed; bottom: 5.5%; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 2em; z-index: 2;
+  }
+  .nav a {
+    writing-mode: vertical-rl; text-orientation: upright;
+    font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", serif;
+    font-size: clamp(11px, 1vw, 15px); letter-spacing: 0.38em;
+    color: rgba(170, 210, 230, 0.45); text-decoration: none;
+    text-shadow: 0 0 10px rgba(100, 200, 220, 0.3);
+    transition: color 0.6s, text-shadow 0.6s;
+  }
+  .nav a:hover {
+    color: rgba(220, 245, 255, 0.92);
+    text-shadow: 0 0 16px rgba(120, 230, 220, 0.65);
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="title">
+  <div class="seal">道</div>
+  <h1>九霄玄境</h1>
+  <p>天地吐纳 · 万象归元</p>
+</div>
+<nav class="nav">
+  <a href="index.html">流光镜影</a>
+  <a href="yunhai-xianque.html">云海仙阙</a>
+  <a href="muxia-yaotai.html">暮霞瑶台</a>
+</nav>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d");
+  let W = 0, H = 0, DPR = 1;
+
+  /* ── 噪声 ── */
+  const PERM = new Uint8Array(512);
+  (() => {
+    let s = 7777;
+    const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const p = Array.from({ length: 256 }, (_, i) => i);
+    for (let i = 255; i > 0; i--) { const j = (rand() * (i + 1)) | 0; [p[i], p[j]] = [p[j], p[i]]; }
+    for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+  })();
+  const lat = (x, y) => PERM[(PERM[x & 255] + y) & 255] / 255;
+  function noise2(x, y) {
+    const xi = x | 0, yi = y | 0, xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = lat(xi, yi), b = lat(xi + 1, yi), c = lat(xi, yi + 1), d = lat(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  function fbm(x, y, oct = 4) {
+    let s = 0, a = 0.5, t = 0;
+    for (let i = 0; i < oct; i++) { s += noise2(x, y) * a; t += a; x *= 2.03; y *= 2.03; a *= 0.5; }
+    return s / t;
+  }
+
+  /* ── 鼠标(神识) ── */
+  const mouse = { x: -9999, y: -9999, tx: -9999, ty: -9999, px: -9999, py: -9999, activity: 0, glow: 0, presence: 0, inside: false };
+  function onPtr(x, y) {
+    if (mouse.tx < -999) { mouse.x = x; mouse.y = y; mouse.px = x; mouse.py = y; }
+    mouse.tx = x; mouse.ty = y;
+    mouse.activity = Math.min(1, mouse.activity + 0.07);
+    mouse.inside = true;
+  }
+  window.addEventListener("mousemove", e => onPtr(e.clientX, e.clientY));
+  window.addEventListener("touchmove", e => { const t = e.touches[0]; if (t) onPtr(t.clientX, t.clientY); }, { passive: true });
+  window.addEventListener("touchstart", e => { const t = e.touches[0]; if (t) onPtr(t.clientX, t.clientY); }, { passive: true });
+  document.addEventListener("mouseleave", () => { mouse.inside = false; });
+
+  /* ── 贴图 ── */
+  function glow(size, stops) {
+    const c = document.createElement("canvas"); c.width = c.height = size;
+    const g = c.getContext("2d");
+    const gr = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    for (const [p, col] of stops) gr.addColorStop(p, col);
+    g.fillStyle = gr; g.fillRect(0, 0, size, size);
+    return c;
+  }
+  const JADE_GLOW = glow(64, [[0, "rgba(80, 240, 210, 0.9)"], [0.4, "rgba(60, 200, 180, 0.4)"], [1, "rgba(40, 160, 150, 0)"]]);
+  const GOLD_GLOW = glow(64, [[0, "rgba(255, 220, 140, 0.9)"], [0.4, "rgba(240, 190, 100, 0.4)"], [1, "rgba(200, 160, 80, 0)"]]);
+  const VIOLET_GLOW = glow(64, [[0, "rgba(180, 140, 255, 0.85)"], [0.4, "rgba(140, 100, 220, 0.4)"], [1, "rgba(100, 70, 180, 0)"]]);
+
+  /* ── 场景数据 ── */
+  let stars = [], daoLines = [];
+  let peaks = [], qiRivers = [], qiParticles = [];
+  let formation = { nodes: [], rings: 3 };
+  let spiritTree = null;
+  let koi = [], swords = [], lotus = null;
+  let motes = [], trail = [];
+  let skyGrad = null, abyssGrad = null, vignette = null;
+
+  // 远山层
+  const PEAK_LAYERS = [
+    { seed: 3.3,  base: 0.58, amp: 0.09, freq: 0.0028, drift: 0.003, col: "rgba(42, 28, 72, 0.55)",  parallax: 0.02 },
+    { seed: 17.9, base: 0.66, amp: 0.11, freq: 0.0034, drift: 0.005, col: "rgba(32, 20, 58, 0.72)",  parallax: 0.04 },
+    { seed: 41.2, base: 0.76, amp: 0.10, freq: 0.0042, drift: 0.008, col: "rgba(22, 14, 44, 0.88)",  parallax: 0.07 },
+    { seed: 68.5, base: 0.88, amp: 0.08, freq: 0.0050, drift: 0.012, col: "rgba(14, 8, 30, 0.96)",  parallax: 0.11 },
+  ];
+
+  // 灵气长河路径
+  const RIVER_PATHS = [
+    { seed: 1.1, y0: 0.38, amp: 0.12, freq: 0.0018, speed: 0.06, hue: 168, width: 2.2, particles: 80 },
+    { seed: 5.7, y0: 0.52, amp: 0.10, freq: 0.0022, speed: 0.08, hue: 175, width: 1.6, particles: 60 },
+    { seed: 12.3, y0: 0.44, amp: 0.14, freq: 0.0015, speed: 0.05, hue: 48,  width: 1.8, particles: 50 },
+    { seed: 22.8, y0: 0.62, amp: 0.08, freq: 0.0026, speed: 0.10, hue: 265, width: 1.2, particles: 40 },
+  ];
+
+  function riverY(path, x, t) {
+    return H * path.y0 + (fbm(x * path.freq + path.seed, t * path.speed + path.seed, 3) - 0.5) * 2 * H * path.amp;
+  }
+
+  function initFormation() {
+    const cx = W * 0.5, cy = H * 0.28, R = Math.min(W, H) * 0.16;
+    formation.nodes = [];
+    // 八卦方位 + 中心
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+      formation.nodes.push({ x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R, a, R, kind: "outer" });
+    }
+    formation.nodes.push({ x: cx, y: cy, a: 0, R: 0, kind: "center" });
+    // 内圈六芒
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      formation.nodes.push({ x: cx + Math.cos(a) * R * 0.55, y: cy + Math.sin(a) * R * 0.55, a, R: R * 0.55, kind: "inner" });
+    }
+  }
+
+  function initSpiritTree() {
+    spiritTree = {
+      x: W * 0.18, baseY: H * 0.82, height: H * 0.55, width: W * 0.14,
+      seed: 33.7, roots: [], canopy: [],
+    };
+    for (let i = 0; i < 7; i++) {
+      const a = -Math.PI * 0.35 + (i / 6) * Math.PI * 0.7;
+      spiritTree.roots.push({ a, len: spiritTree.height * (0.35 + fbm(i * 2.1, 5.5, 2) * 0.25), w: 2 + i * 0.3 });
+    }
+    for (let i = 0; i < 12; i++) {
+      spiritTree.canopy.push({
+        a: (i / 12) * Math.PI * 2 + fbm(i, 3.3, 2) * 0.5,
+        r: spiritTree.width * (0.5 + fbm(i * 1.7, 8.8, 2) * 0.5),
+        h: spiritTree.height * (0.25 + fbm(i * 2.3, 11.1, 2) * 0.2),
+      });
+    }
+  }
+
+  function initKoi() {
+    koi = [];
+    for (let i = 0; i < 5; i++) {
+      koi.push({
+        x: Math.random() * W, y: H * (0.55 + Math.random() * 0.25),
+        vx: (Math.random() - 0.5) * 0.6, vy: (Math.random() - 0.5) * 0.2,
+        size: 14 + Math.random() * 10, phase: Math.random() * Math.PI * 2,
+        hue: [168, 175, 48, 280][i % 4], seed: Math.random() * 100,
+      });
+    }
+  }
+
+  function initQiParticles() {
+    qiParticles = [];
+    for (const path of RIVER_PATHS) {
+      for (let i = 0; i < path.particles; i++) {
+        qiParticles.push({
+          path, t: Math.random(), offset: (Math.random() - 0.5) * 20,
+          speed: 0.08 + Math.random() * 0.12, size: 1 + Math.random() * 2.5,
+          sprite: [JADE_GLOW, GOLD_GLOW, VIOLET_GLOW][(Math.random() * 3) | 0],
+        });
+      }
+    }
+  }
+
+  function initLotus() {
+    lotus = { x: W * 0.78, y: H * 0.32, r: Math.min(W, H) * 0.045, phase: 0, bloom: 0.6 };
+  }
+
+  function initSwords() {
+    swords = [];
+    for (let i = 0; i < 3; i++) {
+      swords.push({
+        x: -100, y: H * (0.15 + Math.random() * 0.3),
+        vx: 2.5 + Math.random() * 2, vy: (Math.random() - 0.5) * 0.3,
+        len: 80 + Math.random() * 60, life: 0, maxLife: 3 + Math.random() * 4,
+        hue: 180 + Math.random() * 40, delay: i * 2.5 + Math.random() * 3,
+      });
+    }
+  }
+
+  function initMotes() {
+    motes = [];
+    const n = Math.floor(W / 18);
+    for (let i = 0; i < n; i++) {
+      motes.push({
+        x: Math.random() * W, y: Math.random() * H,
+        r: 1 + Math.random() * 2.5,
+        sprite: [JADE_GLOW, GOLD_GLOW, VIOLET_GLOW][(Math.random() * 3) | 0],
+        tw: Math.random() * Math.PI * 2, seed: Math.random() * 100,
+        layer: Math.random(),
+      });
+    }
+  }
+
+  function initDaoConstellation() {
+    daoLines = [];
+    // 简化的河图洛书连线
+    const pts = [
+      [0.12, 0.08], [0.88, 0.12], [0.92, 0.45], [0.75, 0.22],
+      [0.55, 0.06], [0.30, 0.18], [0.08, 0.38], [0.22, 0.55],
+      [0.45, 0.15], [0.65, 0.35], [0.38, 0.42],
+    ];
+    stars = pts.map(([x, y], i) => ({
+      x: x * W, y: y * H, r: 1 + (i % 3) * 0.5,
+      tw: Math.random() * Math.PI * 2, sp: 0.3 + Math.random() * 1,
+      bright: i < 3,
+    }));
+    const links = [[0,4],[4,8],[8,5],[5,1],[1,9],[9,2],[2,6],[6,7],[7,0],[8,10],[10,3],[3,9]];
+    for (const [a, b] of links) daoLines.push([a, b]);
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+    skyGrad.addColorStop(0, "#06040f");
+    skyGrad.addColorStop(0.25, "#120a28");
+    skyGrad.addColorStop(0.50, "#1e1240");
+    skyGrad.addColorStop(0.72, "#2a1a50");
+    skyGrad.addColorStop(0.88, "#1a1030");
+    skyGrad.addColorStop(1, "#0a0618");
+
+    abyssGrad = ctx.createRadialGradient(W * 0.5, H * 0.9, 0, W * 0.5, H * 0.9, H * 0.6);
+    abyssGrad.addColorStop(0, "rgba(20, 10, 40, 0.6)");
+    abyssGrad.addColorStop(1, "rgba(6, 4, 15, 0)");
+
+    vignette = ctx.createRadialGradient(W / 2, H * 0.5, Math.min(W, H) * 0.35, W / 2, H * 0.5, Math.max(W, H) * 0.75);
+    vignette.addColorStop(0, "rgba(4, 2, 12, 0)");
+    vignette.addColorStop(1, "rgba(4, 2, 12, 0.65)");
+
+    initFormation();
+    initSpiritTree();
+    initDaoConstellation();
+    initKoi();
+    initQiParticles();
+    initLotus();
+    initSwords();
+    initMotes();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  /* ── 天地吐纳:全局呼吸脉动 ── */
+  function worldBreath(t) {
+    return 0.5 + 0.5 * Math.sin(t * 0.18) * 0.5 + 0.5 * Math.sin(t * 0.07 + 1.3) * 0.3;
+  }
+
+  /* ── 绘制:星空与道纹星座 ── */
+  function drawCosmos(t, breath) {
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 道纹星座
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const [a, b] of daoLines) {
+      const sa = stars[a], sb = stars[b];
+      const pulse = 0.15 + 0.12 * breath + 0.08 * Math.sin(t * 0.4 + a);
+      ctx.strokeStyle = `rgba(120, 200, 220, ${pulse})`;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(sa.x, sa.y);
+      ctx.lineTo(sb.x, sb.y);
+      ctx.stroke();
+    }
+    for (const s of stars) {
+      const a = (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * s.sp + s.tw))) * (s.bright ? 1.2 : 0.7);
+      ctx.globalAlpha = a * (0.6 + breath * 0.4);
+      ctx.fillStyle = s.bright ? "#e8f4ff" : "#b8d8f0";
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+      if (s.bright) {
+        ctx.globalAlpha = a * 0.3;
+        ctx.drawImage(JADE_GLOW, s.x - 8, s.y - 8, 16, 16);
+      }
+    }
+    ctx.restore();
+  }
+
+  /* ── 绘制:远山 ── */
+  function drawPeaks(t) {
+    const step = 8;
+    for (const m of PEAK_LAYERS) {
+      const drift = t * m.drift;
+      const mxOff = mouse.inside ? (mouse.x - W * 0.5) * m.parallax * mouse.presence : 0;
+      ctx.fillStyle = m.col;
+      ctx.beginPath();
+      ctx.moveTo(-4, H + 2);
+      for (let x = -4; x <= W + step; x += step) {
+        const n = fbm(x * m.freq + m.seed + drift, m.seed * 1.7, 4);
+        const ridge = H * m.base + (n - 0.5) * 2 * H * m.amp;
+        ctx.lineTo(x + mxOff, ridge);
+      }
+      ctx.lineTo(W + 4, H + 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  /* ── 绘制:上古阵纹 ── */
+  function drawFormation(t) {
+    const breath = worldBreath(t);
+    const cx = W * 0.5, cy = H * 0.28;
+    const baseR = Math.min(W, H) * 0.16;
+    // 阵纹随神识(鼠标)微微偏转
+    let rot = t * 0.04;
+    if (mouse.presence > 0.01) {
+      const target = Math.atan2(mouse.y - cy, mouse.x - cx) * 0.15;
+      rot += target * mouse.presence;
+    }
+    const R = baseR * (0.95 + breath * 0.08 + mouse.glow * 0.05);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.globalCompositeOperation = "lighter";
+
+    // 外环
+    for (let ring = 1; ring <= 3; ring++) {
+      const r = R * (0.35 + ring * 0.22);
+      const a = 0.08 + ring * 0.04 + breath * 0.06 + mouse.glow * 0.08;
+      ctx.strokeStyle = `rgba(100, 220, 200, ${a})`;
+      ctx.lineWidth = 0.8 + ring * 0.3;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // 八卦连线
+    const outer = formation.nodes.filter(n => n.kind === "outer");
+    const inner = formation.nodes.filter(n => n.kind === "inner");
+    const center = formation.nodes.find(n => n.kind === "center");
+
+    ctx.strokeStyle = `rgba(140, 230, 210, ${0.25 + breath * 0.15 + mouse.glow * 0.2})`;
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < outer.length; i++) {
+      const a = outer[i], b = outer[(i + 1) % outer.length];
+      const ax = Math.cos(a.a) * R - cx + a.x - (a.x - cx), ay = Math.sin(a.a) * R;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a.a) * R, Math.sin(a.a) * R);
+      ctx.lineTo(Math.cos(b.a) * R, Math.sin(b.a) * R);
+      ctx.stroke();
+      // 连中心
+      ctx.globalAlpha = 0.15 + breath * 0.1;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a.a) * R, Math.sin(a.a) * R);
+      ctx.lineTo(0, 0);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // 内六芒
+    ctx.strokeStyle = `rgba(200, 180, 255, ${0.2 + breath * 0.12})`;
+    for (let i = 0; i < inner.length; i++) {
+      const a = inner[i], b = inner[(i + 2) % inner.length];
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a.a) * R * 0.55, Math.sin(a.a) * R * 0.55);
+      ctx.lineTo(Math.cos(b.a) * R * 0.55, Math.sin(b.a) * R * 0.55);
+      ctx.stroke();
+    }
+
+    // 阵眼节点
+    for (const n of formation.nodes) {
+      let nx, ny;
+      if (n.kind === "center") { nx = 0; ny = 0; }
+      else if (n.kind === "outer") { nx = Math.cos(n.a) * R; ny = Math.sin(n.a) * R; }
+      else { nx = Math.cos(n.a) * R * 0.55; ny = Math.sin(n.a) * R * 0.55; }
+
+      const pulse = 0.5 + 0.5 * Math.sin(t * 1.5 + n.a * 3);
+      const s = (n.kind === "center" ? 10 : 5) * (0.7 + pulse * 0.5 + mouse.glow * 0.3);
+      ctx.globalAlpha = 0.5 + pulse * 0.4;
+      const spr = n.kind === "center" ? GOLD_GLOW : (n.kind === "inner" ? VIOLET_GLOW : JADE_GLOW);
+      ctx.drawImage(spr, nx - s, ny - s, s * 2, s * 2);
+    }
+    ctx.restore();
+  }
+
+  /* ── 绘制:灵木通天 ── */
+  function drawSpiritTree(t) {
+    const st = spiritTree;
+    const breath = worldBreath(t);
+    const topY = st.baseY - st.height;
+    const sway = Math.sin(t * 0.3) * 3 + (mouse.presence > 0.01 ? (mouse.x - st.x) * 0.008 * mouse.presence : 0);
+
+    ctx.save();
+    ctx.translate(st.x + sway, 0);
+
+    // 树干
+    const trunkGrad = ctx.createLinearGradient(-st.width * 0.08, topY, st.width * 0.08, st.baseY);
+    trunkGrad.addColorStop(0, "rgba(30, 50, 60, 0.9)");
+    trunkGrad.addColorStop(0.5, "rgba(20, 35, 45, 0.95)");
+    trunkGrad.addColorStop(1, "rgba(12, 22, 30, 0.98)");
+    ctx.fillStyle = trunkGrad;
+    ctx.beginPath();
+    ctx.moveTo(-st.width * 0.06, st.baseY);
+    ctx.quadraticCurveTo(-st.width * 0.10, (topY + st.baseY) * 0.5, -st.width * 0.04, topY + st.height * 0.08);
+    ctx.lineTo(st.width * 0.04, topY + st.height * 0.08);
+    ctx.quadraticCurveTo(st.width * 0.10, (topY + st.baseY) * 0.5, st.width * 0.06, st.baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // 灵根:向下延伸入虚空,发青光
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const root of st.roots) {
+      const ex = Math.cos(root.a) * root.len;
+      const ey = Math.sin(root.a) * root.len * 0.6 + st.baseY * 0.15;
+      const grad = ctx.createLinearGradient(0, st.baseY, ex, st.baseY + ey);
+      grad.addColorStop(0, `rgba(60, 220, 190, ${0.5 + breath * 0.3})`);
+      grad.addColorStop(0.6, `rgba(40, 180, 160, ${0.25 + breath * 0.15})`);
+      grad.addColorStop(1, "rgba(30, 140, 130, 0)");
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = root.w;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(0, st.baseY);
+      const midX = ex * 0.5 + Math.sin(t * 0.5 + root.a * 2) * 8;
+      const midY = st.baseY + ey * 0.4;
+      ctx.quadraticCurveTo(midX, midY, ex, st.baseY + ey);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 树冠:多层灵叶,发柔光
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const c of st.canopy) {
+      const cx = Math.cos(c.a + t * 0.05) * c.r * 0.3;
+      const cy = topY + c.h * 0.3 + Math.sin(t * 0.4 + c.a) * 4;
+      const cr = c.r * (0.8 + breath * 0.15);
+      const a = 0.12 + breath * 0.08;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      grad.addColorStop(0, `rgba(80, 220, 180, ${a * 2})`);
+      grad.addColorStop(0.5, `rgba(60, 180, 150, ${a})`);
+      grad.addColorStop(1, "rgba(40, 140, 120, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 树顶:一点灵光源
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const glowR = 20 + breath * 12 + mouse.glow * 15;
+    ctx.globalAlpha = 0.4 + breath * 0.3;
+    ctx.drawImage(JADE_GLOW, -glowR, topY - glowR * 0.5, glowR * 2, glowR * 2);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  /* ── 绘制:灵气长河 ── */
+  function drawQiRivers(t) {
+    const breath = worldBreath(t);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    for (const path of RIVER_PATHS) {
+      const step = 12;
+      const pts = [];
+      for (let x = 0; x <= W; x += step) {
+        let y = riverY(path, x, t);
+        if (mouse.glow > 0.004) {
+          const dx = x - mouse.x, dy = mouse.y - y;
+          const d2 = dx * dx + dy * dy;
+          const pull = mouse.glow * Math.exp(-d2 / (2 * 180 * 180));
+          y += (mouse.y - y) * pull * 0.3;
+        }
+        pts.push([x, y]);
+      }
+
+      // 河道光带
+      const hue = path.hue;
+      ctx.strokeStyle = `hsla(${hue}, 80%, 65%, ${0.06 + breath * 0.04})`;
+      ctx.lineWidth = path.width * 8;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+
+      ctx.strokeStyle = `hsla(${hue}, 90%, 75%, ${0.12 + breath * 0.08 + mouse.glow * 0.1})`;
+      ctx.lineWidth = path.width;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function updateQiParticles(t, dt) {
+    const d60 = dt * 60;
+    for (const p of qiParticles) {
+      p.t += p.speed * dt * (1 + mouse.glow * 0.5);
+      if (p.t > 1) p.t -= 1;
+      const x = p.t * W;
+      let y = riverY(p.path, x, t) + p.offset;
+      if (mouse.glow > 0.004) {
+        const dx = x - mouse.x, dy = mouse.y - y;
+        const d2 = dx * dx + dy * dy;
+        const pull = mouse.glow * Math.exp(-d2 / (2 * 200 * 200));
+        y += (mouse.y - y) * pull * 0.25;
+        p.offset += (Math.random() - 0.5) * pull * 0.5;
+      }
+      p._x = x; p._y = y;
+    }
+  }
+
+  function drawQiParticles(t) {
+    const breath = worldBreath(t);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of qiParticles) {
+      const a = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 2 + p.t * 20));
+      ctx.globalAlpha = a * (0.6 + breath * 0.4);
+      const s = p.size * 5;
+      ctx.drawImage(p.sprite, p._x - s / 2, p._y - s / 2, s, s);
+    }
+    ctx.restore();
+  }
+
+  /* ── 绘制:虚空金莲 ── */
+  function drawLotus(t) {
+    const l = lotus;
+    const breath = worldBreath(t);
+    l.bloom = 0.55 + 0.15 * Math.sin(t * 0.12) + breath * 0.1;
+    const r = l.r * l.bloom;
+    const rot = t * 0.08;
+
+    ctx.save();
+    ctx.translate(l.x, l.y);
+    ctx.rotate(rot);
+    ctx.globalCompositeOperation = "lighter";
+
+    // 光晕
+    ctx.globalAlpha = 0.25 + breath * 0.15;
+    ctx.drawImage(GOLD_GLOW, -r * 3, -r * 3, r * 6, r * 6);
+
+    // 花瓣
+    const petals = 12;
+    for (let i = 0; i < petals; i++) {
+      const a = (i / petals) * Math.PI * 2;
+      const pr = r * (0.7 + 0.3 * Math.sin(t * 0.3 + i));
+      ctx.save();
+      ctx.rotate(a);
+      const grad = ctx.createLinearGradient(0, 0, 0, -pr);
+      grad.addColorStop(0, `rgba(255, 220, 150, ${0.5 + breath * 0.3})`);
+      grad.addColorStop(0.6, `rgba(255, 200, 120, ${0.3 + breath * 0.2})`);
+      grad.addColorStop(1, "rgba(255, 180, 100, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(pr * 0.3, -pr * 0.5, pr * 0.15, -pr);
+      ctx.quadraticCurveTo(-pr * 0.15, -pr * 0.5, 0, 0);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 莲心
+    ctx.globalAlpha = 0.7 + breath * 0.3;
+    ctx.fillStyle = "rgba(255, 240, 180, 0.9)";
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* ── 绘制:剑光掠天 ── */
+  function updateSwords(t, dt) {
+    for (const s of swords) {
+      if (s.delay > 0) { s.delay -= dt; continue; }
+      s.life += dt;
+      s.x += s.vx * dt * 60;
+      s.y += s.vy * dt * 60;
+      if (s.life > s.maxLife) {
+        s.life = 0;
+        s.x = -100 - Math.random() * 200;
+        s.y = H * (0.12 + Math.random() * 0.35);
+        s.vx = 2.5 + Math.random() * 3;
+        s.vy = (Math.random() - 0.5) * 0.4;
+        s.maxLife = 3 + Math.random() * 5;
+        s.delay = 1 + Math.random() * 4;
+      }
+    }
+  }
+
+  function drawSwords(t) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const s of swords) {
+      if (s.delay > 0 || s.life <= 0) continue;
+      const fade = 1 - s.life / s.maxLife;
+      const ang = Math.atan2(s.vy, s.vx);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      const grad = ctx.createLinearGradient(-s.len, 0, s.len * 0.3, 0);
+      grad.addColorStop(0, `hsla(${s.hue}, 90%, 80%, 0)`);
+      grad.addColorStop(0.3, `hsla(${s.hue}, 95%, 85%, ${fade * 0.7})`);
+      grad.addColorStop(0.85, `hsla(${s.hue + 20}, 100%, 95%, ${fade})`);
+      grad.addColorStop(1, `hsla(${s.hue}, 90%, 90%, ${fade * 0.5})`);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(-s.len, 0);
+      ctx.lineTo(s.len * 0.3, 0);
+      ctx.stroke();
+      // 剑尖光点
+      ctx.globalAlpha = fade;
+      ctx.drawImage(JADE_GLOW, s.len * 0.25, -6, 12, 12);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /* ── 绘制:灵鱼游弋 ── */
+  function updateKoi(t, dt) {
+    const d60 = dt * 60;
+    const R = Math.max(160, Math.min(W, H) * 0.2);
+    for (const k of koi) {
+      k.vx += (fbm(k.seed, t * 0.2, 2) - 0.5) * 0.04 * d60;
+      k.vy += (fbm(k.seed + 50, t * 0.2, 2) - 0.5) * 0.03 * d60;
+      if (mouse.presence > 0.02) {
+        const dx = k.x - mouse.x, dy = k.y - mouse.y;
+        const d = Math.hypot(dx, dy);
+        if (d < R && d > 1) {
+          const f = Math.pow(1 - d / R, 1.8) * 0.06 * mouse.presence * d60;
+          k.vx += (dx / d) * f;
+          k.vy += (dy / d) * f * 0.7;
+        }
+      }
+      const sp = Math.hypot(k.vx, k.vy) || 1e-6;
+      const maxV = 1.2;
+      if (sp > maxV) { k.vx = k.vx / sp * maxV; k.vy = k.vy / sp * maxV; }
+      k.x += k.vx * d60;
+      k.y += k.vy * d60;
+      if (k.x < -30) k.x = W + 30;
+      if (k.x > W + 30) k.x = -30;
+      k.y = Math.max(H * 0.48, Math.min(H * 0.82, k.y));
+      k.phase += 0.12 * d60;
+    }
+  }
+
+  function drawKoi() {
+    for (const k of koi) {
+      const s = k.size;
+      const facing = k.vx >= 0 ? 1 : -1;
+      const tail = Math.sin(k.phase) * s * 0.3;
+      ctx.save();
+      ctx.translate(k.x, k.y);
+      ctx.scale(facing, 1);
+      ctx.rotate(Math.atan2(k.vy, Math.abs(k.vx)) * 0.25);
+
+      // 尾
+      ctx.fillStyle = `hsla(${k.hue}, 70%, 55%, 0.7)`;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.3, 0);
+      ctx.quadraticCurveTo(-s * 0.55, tail, -s * 0.7, tail * 1.2);
+      ctx.quadraticCurveTo(-s * 0.55, -tail * 0.3, -s * 0.3, 0);
+      ctx.fill();
+
+      // 身
+      const bodyGrad = ctx.createLinearGradient(-s * 0.3, 0, s * 0.4, 0);
+      bodyGrad.addColorStop(0, `hsla(${k.hue}, 60%, 45%, 0.85)`);
+      bodyGrad.addColorStop(0.5, `hsla(${k.hue + 10}, 75%, 60%, 0.9)`);
+      bodyGrad.addColorStop(1, `hsla(${k.hue + 20}, 80%, 70%, 0.85)`);
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s * 0.42, s * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 鳍
+      ctx.fillStyle = `hsla(${k.hue}, 65%, 50%, 0.6)`;
+      ctx.beginPath();
+      ctx.moveTo(0, -s * 0.12);
+      ctx.lineTo(s * 0.1, -s * 0.3);
+      ctx.lineTo(s * 0.2, -s * 0.1);
+      ctx.closePath();
+      ctx.fill();
+
+      // 灵光环
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.35;
+      ctx.drawImage(JADE_GLOW, -s * 0.2, -s * 0.25, s * 0.8, s * 0.5);
+      ctx.restore();
+      ctx.restore();
+    }
+  }
+
+  /* ── 绘制:云海 ── */
+  function drawCloudSea(t) {
+    const breath = worldBreath(t);
+    const layers = [
+      { base: 0.72, amp: 28, freq: 0.0024, speed: 0.035, alpha: 0.35, col: "rgba(80, 60, 120" },
+      { base: 0.82, amp: 32, freq: 0.0020, speed: 0.050, alpha: 0.45, col: "rgba(100, 80, 140" },
+      { base: 0.92, amp: 36, freq: 0.0017, speed: 0.065, alpha: 0.55, col: "rgba(120, 100, 160" },
+    ];
+    const step = 10;
+    const sigma = Math.max(140, W * 0.10);
+    const twoS2 = 2 * sigma * sigma;
+
+    for (const l of layers) {
+      const baseY = H * l.base;
+      const edge = [];
+      for (let x = -20; x <= W + 20; x += step) {
+        let y = baseY + (fbm(x * l.freq + 3.3, t * l.speed, 3) - 0.5) * 2 * l.amp;
+        if (mouse.presence > 0.01) {
+          const dx = x - mouse.x;
+          const dyG = Math.exp(-Math.pow(mouse.y - baseY, 2) / (2 * Math.pow(H * 0.2, 2)));
+          y -= Math.exp(-(dx * dx) / twoS2) * dyG * 40 * mouse.presence;
+        }
+        edge.push(y);
+      }
+      const a = l.alpha * (0.7 + breath * 0.3);
+      const grad = ctx.createLinearGradient(0, baseY - l.amp, 0, H);
+      grad.addColorStop(0, `${l.col}, ${a * 0.6})`);
+      grad.addColorStop(0.5, `${l.col}, ${a})`);
+      grad.addColorStop(1, `${l.col}, ${a * 1.2})`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(-20, edge[0]);
+      for (let i = 1; i < edge.length; i++) ctx.lineTo(-20 + i * step, edge[i]);
+      ctx.lineTo(W + 20, H + 4);
+      ctx.lineTo(-20, H + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  /* ── 绘制:浮游灵尘 ── */
+  function drawMotes(t, dt) {
+    const d60 = dt * 60;
+    const breath = worldBreath(t);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of motes) {
+      const drift = (fbm(p.seed, t * 0.08, 2) - 0.5);
+      p.x += drift * 0.5 * d60 * (0.5 + p.layer);
+      p.y -= (0.04 + fbm(p.seed + 40, t * 0.06, 2) * 0.15) * d60 * (0.3 + p.layer * 0.7);
+      if (mouse.glow > 0.004) {
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const R = 200;
+        if (d < R) {
+          const k = (1 - d / R) * mouse.glow * 0.15 * d60;
+          p.x += (-dy / d) * k * 2;
+          p.y += (dx / d) * k * 2;
+        }
+      }
+      if (p.y < -8) { p.y = H + 8; p.x = Math.random() * W; }
+      if (p.x < -8) p.x = W + 8;
+      if (p.x > W + 8) p.x = -8;
+      const a = 0.15 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.1 + p.tw)) * (0.5 + breath * 0.5);
+      ctx.globalAlpha = a;
+      const s = p.r * 5;
+      ctx.drawImage(p.sprite, p.x - s / 2, p.y - s / 2, s, s);
+    }
+    ctx.restore();
+  }
+
+  /* ── 神识灵光 ── */
+  function updateMouse(dt) {
+    const d60 = dt * 60;
+    mouse.x += (mouse.tx - mouse.x) * Math.min(1, 0.10 * d60);
+    mouse.y += (mouse.ty - mouse.y) * Math.min(1, 0.10 * d60);
+    mouse.activity = Math.max(0, mouse.activity - 0.010 * d60);
+    const act = mouse.inside ? mouse.activity : 0;
+    mouse.glow += (act - mouse.glow) * Math.min(1, (act > mouse.glow ? 0.028 : 0.014) * d60);
+    const pT = mouse.inside ? 1 : 0;
+    mouse.presence += (pT - mouse.presence) * Math.min(1, (pT > mouse.presence ? 0.040 : 0.025) * d60);
+
+    const vx = mouse.x - mouse.px, vy = mouse.y - mouse.py;
+    const speed = Math.hypot(vx, vy);
+    mouse.px = mouse.x; mouse.py = mouse.y;
+
+    if (mouse.inside && speed > 0.4 && trail.length < 120) {
+      const nf = Math.min(3, 1 + (speed / 8) | 0) * (0.15 + 0.85 * mouse.presence);
+      const n = Math.floor(nf) + (Math.random() < nf % 1 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, r = Math.random() * 12;
+        trail.push({
+          x: mouse.x + Math.cos(a) * r, y: mouse.y + Math.sin(a) * r,
+          vx: -vx * 0.04 + (Math.random() - 0.5) * 0.5,
+          vy: -vy * 0.04 + (Math.random() - 0.5) * 0.5 - 0.2,
+          life: 1, decay: 0.007 + Math.random() * 0.010,
+          size: 6 + Math.random() * 12,
+          sprite: [JADE_GLOW, GOLD_GLOW, VIOLET_GLOW][(Math.random() * 3) | 0],
+        });
+      }
+    }
+  }
+
+  function drawDivineSense(t, dt) {
+    const d60 = dt * 60;
+    const breath = worldBreath(t);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const p = trail[i];
+      p.life -= p.decay * d60;
+      if (p.life <= 0) { trail.splice(i, 1); continue; }
+      p.x += p.vx * d60; p.y += p.vy * d60;
+      p.vx *= Math.pow(0.988, d60);
+      p.vy = p.vy * Math.pow(0.988, d60) - 0.003 * d60;
+      ctx.globalAlpha = p.life * 0.65;
+      const s = p.size * (0.4 + p.life * 0.9);
+      ctx.drawImage(p.sprite, p.x - s / 2, p.y - s / 2, s, s);
+    }
+
+    if (mouse.presence > 0.01 && mouse.tx > -999) {
+      const R = (38 + breath * 10 + mouse.glow * 22) * (0.5 + 0.5 * mouse.presence);
+
+      // 外圈:道纹环
+      for (let ring = 0; ring < 2; ring++) {
+        const rr = R * (1.2 + ring * 0.5);
+        const rot = t * (0.8 + ring * 0.4);
+        ctx.globalAlpha = (0.15 + mouse.glow * 0.2) * mouse.presence;
+        ctx.strokeStyle = ring === 0 ? "rgba(80, 220, 200, 0.6)" : "rgba(180, 140, 255, 0.5)";
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        for (let k = 0; k <= 6; k++) {
+          const a = rot + (k / 6) * Math.PI * 2;
+          const px = mouse.x + Math.cos(a) * rr;
+          const py = mouse.y + Math.sin(a) * rr * 0.85;
+          k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+
+      // 核心灵光
+      const core = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, R);
+      core.addColorStop(0, "rgba(200, 255, 240, 0.85)");
+      core.addColorStop(0.3, "rgba(120, 220, 200, 0.35)");
+      core.addColorStop(0.7, "rgba(160, 120, 255, 0.15)");
+      core.addColorStop(1, "rgba(100, 80, 200, 0)");
+      ctx.globalAlpha = (0.45 + mouse.glow * 0.4 + breath * 0.1) * mouse.presence;
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, R, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 三点灵气卫星
+      for (let k = 0; k < 3; k++) {
+        const ang = t * (1.0 + k * 0.35) + k * 2.094;
+        const rr = R * (0.9 + 0.25 * Math.sin(t * 1.8 + k * 2));
+        const px = mouse.x + Math.cos(ang) * rr;
+        const py = mouse.y + Math.sin(ang) * rr * 0.8;
+        const s = 9 + 4 * Math.sin(t * 2.5 + k);
+        ctx.globalAlpha = 0.65 * mouse.presence;
+        ctx.drawImage([JADE_GLOW, GOLD_GLOW, VIOLET_GLOW][k], px - s / 2, py - s / 2, s, s);
+      }
+    }
+    ctx.restore();
+  }
+
+  /* ── 深渊微光 ── */
+  function drawAbyss(t, breath) {
+    ctx.fillStyle = abyssGrad;
+    ctx.fillRect(0, H * 0.7, W, H * 0.3);
+  }
+
+  /* ── 主循环 ── */
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const t = now / 1000;
+    const breath = worldBreath(t);
+
+    updateMouse(dt);
+    updateQiParticles(t, dt);
+    updateKoi(t, dt);
+    updateSwords(t, dt);
+
+    ctx.clearRect(0, 0, W, H);
+
+    drawCosmos(t, breath);
+    drawPeaks(t);
+    drawFormation(t);
+    drawSpiritTree(t);
+    drawQiRivers(t);
+    drawQiParticles(t);
+    drawLotus(t);
+    drawSwords(t);
+    drawCloudSea(t);
+    drawKoi();
+    drawMotes(t, dt);
+    drawAbyss(t, breath);
+    drawDivineSense(t, dt);
+
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, W, H);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
