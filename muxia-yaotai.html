@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>暮霞瑶台 · 仙侠光影</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #1a1028;
+    cursor: none;
+  }
+  #scene {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .title {
+    position: fixed;
+    top: 8%;
+    left: 6%;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    pointer-events: none;
+    user-select: none;
+    color: rgba(255, 236, 214, 0.94);
+    font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", "Songti SC", serif;
+    text-shadow: 0 0 18px rgba(255, 160, 90, 0.55), 0 0 48px rgba(220, 70, 50, 0.35);
+    animation: breathe 8s ease-in-out infinite;
+  }
+  .title h1 {
+    margin: 0;
+    font-size: clamp(34px, 5.2vw, 74px);
+    font-weight: 500;
+    letter-spacing: 0.45em;
+  }
+  .title p {
+    margin: 0 0 0 1.2em;
+    font-size: clamp(13px, 1.3vw, 19px);
+    letter-spacing: 0.5em;
+    color: rgba(255, 214, 180, 0.62);
+    text-shadow: 0 0 12px rgba(255, 150, 80, 0.4);
+  }
+  .nav {
+    position: fixed;
+    bottom: 6%;
+    right: 5%;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", serif;
+    font-size: clamp(12px, 1.1vw, 16px);
+    letter-spacing: 0.42em;
+    color: rgba(255, 220, 190, 0.55);
+    text-decoration: none;
+    text-shadow: 0 0 10px rgba(255, 140, 70, 0.35);
+    transition: color 0.6s ease, text-shadow 0.6s ease;
+    z-index: 2;
+  }
+  .nav:hover {
+    color: rgba(255, 236, 210, 0.92);
+    text-shadow: 0 0 16px rgba(255, 170, 90, 0.7);
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.86; text-shadow: 0 0 18px rgba(255,160,90,.55), 0 0 48px rgba(220,70,50,.35); }
+    50%      { opacity: 1;    text-shadow: 0 0 28px rgba(255,190,120,.85), 0 0 72px rgba(255,110,60,.5); }
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="title">
+  <h1>暮霞瑶台</h1>
+  <p>金乌西沉 · 花雨入云</p>
+</div>
+<a class="nav" href="index.html">流光镜影</a>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d");
+
+  let W = 0, H = 0, DPR = 1;
+  let SUN_X = 0, SUN_Y = 0, SUN_R = 0;
+  let CLOUD_LINE = 0;
+
+  const PERM = new Uint8Array(512);
+  (() => {
+    let s = 4242;
+    const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const p = Array.from({ length: 256 }, (_, i) => i);
+    for (let i = 255; i > 0; i--) {
+      const j = (rand() * (i + 1)) | 0;
+      [p[i], p[j]] = [p[j], p[i]];
+    }
+    for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+  })();
+
+  function lattice(x, y) {
+    return PERM[(PERM[x & 255] + y) & 255] / 255;
+  }
+  function noise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+    const a = lattice(xi, yi), b = lattice(xi + 1, yi);
+    const c = lattice(xi, yi + 1), d = lattice(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  function fbm(x, y, oct = 4) {
+    let sum = 0, amp = 0.5, tot = 0;
+    for (let i = 0; i < oct; i++) {
+      sum += noise2(x, y) * amp;
+      tot += amp;
+      x *= 2.03; y *= 2.03; amp *= 0.5;
+    }
+    return sum / tot;
+  }
+
+  const mouse = {
+    x: -9999, y: -9999,
+    tx: -9999, ty: -9999,
+    px: -9999, py: -9999,
+    activity: 0,
+    glow: 0,
+    presence: 0,
+    inside: false,
+  };
+
+  function onPointer(x, y) {
+    if (mouse.tx < -999) { mouse.x = x; mouse.y = y; mouse.px = x; mouse.py = y; }
+    mouse.tx = x; mouse.ty = y;
+    mouse.activity = Math.min(1, mouse.activity + 0.08);
+    mouse.inside = true;
+  }
+  window.addEventListener("mousemove", e => onPointer(e.clientX, e.clientY));
+  window.addEventListener("touchmove", e => {
+    const t = e.touches[0];
+    if (t) onPointer(t.clientX, t.clientY);
+  }, { passive: true });
+  window.addEventListener("touchstart", e => {
+    const t = e.touches[0];
+    if (t) onPointer(t.clientX, t.clientY);
+  }, { passive: true });
+  document.addEventListener("mouseleave", () => { mouse.inside = false; });
+
+  function makeGlowSprite(size, stops) {
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    for (const [pos, color] of stops) grad.addColorStop(pos, color);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    return c;
+  }
+
+  const GOLD_SPRITE = makeGlowSprite(64, [
+    [0,    "rgba(255, 236, 180, 0.95)"],
+    [0.35, "rgba(255, 170, 70, 0.5)"],
+    [1,    "rgba(255, 90, 40, 0)"],
+  ]);
+  const AMBER_SPRITE = makeGlowSprite(64, [
+    [0,    "rgba(255, 210, 140, 0.9)"],
+    [0.4,  "rgba(255, 120, 50, 0.4)"],
+    [1,    "rgba(220, 40, 20, 0)"],
+  ]);
+  const ROSE_SPRITE = makeGlowSprite(64, [
+    [0,    "rgba(255, 210, 220, 0.9)"],
+    [0.4,  "rgba(255, 140, 150, 0.4)"],
+    [1,    "rgba(220, 80, 90, 0)"],
+  ]);
+  const CLOUD_SPRITE = makeGlowSprite(256, [
+    [0,   "rgba(255, 214, 186, 0.55)"],
+    [0.5, "rgba(255, 176, 140, 0.22)"],
+    [1,   "rgba(230, 120, 90, 0)"],
+  ]);
+  const DUSK_CLOUD = makeGlowSprite(256, [
+    [0,   "rgba(180, 90, 110, 0.5)"],
+    [0.5, "rgba(120, 50, 80, 0.22)"],
+    [1,   "rgba(60, 20, 50, 0)"],
+  ]);
+
+  function makePetalSprite() {
+    const c = document.createElement("canvas");
+    c.width = c.height = 48;
+    const g = c.getContext("2d");
+    g.translate(24, 24);
+    g.fillStyle = "rgba(255, 196, 204, 0.92)";
+    g.beginPath();
+    g.moveTo(0, -16);
+    g.bezierCurveTo(12, -10, 14, 6, 0, 16);
+    g.bezierCurveTo(-14, 6, -12, -10, 0, -16);
+    g.fill();
+    g.fillStyle = "rgba(255, 236, 230, 0.7)";
+    g.beginPath();
+    g.moveTo(0, -10);
+    g.bezierCurveTo(6, -6, 6, 4, 0, 10);
+    g.bezierCurveTo(-2, 4, -2, -6, 0, -10);
+    g.fill();
+    return c;
+  }
+  const PETAL_SPRITE = makePetalSprite();
+
+  let stars = [];
+  let clouds = [];
+  let seaClouds = [];
+  let rays = [];
+  let petals = [];
+  let fireflies = [];
+  let cranes = [];
+  const trail = [];
+
+  const PEAKS = [
+    { seed: 19.2, base: 0.58, amp: 0.16, freq: 0.0018, drift: 0.003, top: "hsla(18, 42%, 18%, 0.55)", bot: "hsla(14, 38%, 28%, 0.10)" },
+    { seed: 61.4, base: 0.66, amp: 0.14, freq: 0.0024, drift: 0.006, top: "hsla(16, 48%, 12%, 0.78)", bot: "hsla(12, 40%, 22%, 0.18)" },
+    { seed: 88.7, base: 0.76, amp: 0.11, freq: 0.0032, drift: 0.009, top: "hsla(14, 52%, 8%, 0.94)",  bot: "hsla(10, 44%, 16%, 0.40)" },
+  ];
+
+  function initStars() {
+    stars = [];
+    const n = Math.floor((W * H) / 14000);
+    for (let i = 0; i < n; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.38,
+        r: 0.4 + Math.random() * 1.0,
+        tw: Math.random() * Math.PI * 2,
+        sp: 0.4 + Math.random() * 1.4,
+      });
+    }
+  }
+
+  function initClouds() {
+    clouds = [];
+    for (let i = 0; i < 10; i++) {
+      const depth = i / 10;
+      clouds.push({
+        x: Math.random() * W,
+        y: H * (0.22 + depth * 0.28),
+        w: W * (0.26 + Math.random() * 0.42),
+        h: 36 + Math.random() * 70 + depth * 40,
+        speed: (0.04 + Math.random() * 0.07) * (0.35 + depth),
+        alpha: 0.08 + Math.random() * 0.10 + depth * 0.04,
+        seed: Math.random() * 100,
+        dusk: Math.random() < 0.35,
+      });
+    }
+  }
+
+  function initSeaClouds() {
+    seaClouds = [];
+    for (let i = 0; i < 16; i++) {
+      seaClouds.push({
+        x: Math.random() * W,
+        y: CLOUD_LINE + Math.random() * (H - CLOUD_LINE) * 0.85,
+        w: W * (0.32 + Math.random() * 0.48),
+        h: 50 + Math.random() * 90,
+        speed: 0.05 + Math.random() * 0.09,
+        alpha: 0.10 + Math.random() * 0.12,
+        seed: Math.random() * 100,
+      });
+    }
+  }
+
+  function initRays() {
+    rays = [];
+    const n = 14;
+    for (let i = 0; i < n; i++) {
+      rays.push({
+        ang: (i / n) * Math.PI * 2 + Math.random() * 0.12,
+        spread: 0.035 + Math.random() * 0.04,
+        len: 0.55 + Math.random() * 0.5,
+        pulse: Math.random() * Math.PI * 2,
+        seed: Math.random() * 20,
+      });
+    }
+  }
+
+  function initPetals() {
+    petals = [];
+    const n = Math.floor(W / 18);
+    for (let i = 0; i < n; i++) {
+      petals.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: -0.25 + Math.random() * 0.15,
+        vy: 0.22 + Math.random() * 0.35,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 0.04,
+        size: 7 + Math.random() * 11,
+        seed: Math.random() * 100,
+      });
+    }
+  }
+
+  function initFireflies() {
+    fireflies = [];
+    const n = 38;
+    for (let i = 0; i < n; i++) {
+      fireflies.push({
+        x: Math.random() * W,
+        y: H * (0.25 + Math.random() * 0.55),
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.3,
+        r: 2 + Math.random() * 3.2,
+        tw: Math.random() * Math.PI * 2,
+        sp: 1.2 + Math.random() * 2.2,
+        flee: 0,
+        seed: Math.random() * 100,
+      });
+    }
+  }
+
+  function initCranes() {
+    cranes = [];
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2;
+      cranes.push({
+        x: W * (0.25 + Math.random() * 0.5),
+        y: H * (0.18 + Math.random() * 0.22),
+        vx: Math.cos(a) * 0.7,
+        vy: Math.sin(a) * 0.25,
+        size: 16 + Math.random() * 10,
+        phase: Math.random() * Math.PI * 2,
+        flee: 0,
+        seed: Math.random() * 50,
+      });
+    }
+  }
+
+  let skyGrad = null, vignette = null, sunSprite = null;
+
+  function makeSunSprite() {
+    const S = Math.max(96, Math.ceil(SUN_R * 2.4 * DPR));
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d");
+    const R = S / 2;
+    const disc = g.createRadialGradient(R * 0.92, R * 0.88, R * 0.08, R, R, R * 0.92);
+    disc.addColorStop(0, "rgba(255, 248, 220, 1)");
+    disc.addColorStop(0.45, "rgba(255, 210, 120, 0.98)");
+    disc.addColorStop(0.82, "rgba(255, 130, 55, 0.92)");
+    disc.addColorStop(1, "rgba(220, 60, 30, 0.15)");
+    g.fillStyle = disc;
+    g.beginPath();
+    g.arc(R, R, R * 0.92, 0, Math.PI * 2);
+    g.fill();
+    return c;
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    SUN_X = W * 0.32;
+    SUN_Y = H * 0.40;
+    SUN_R = Math.min(W, H) * 0.072;
+    CLOUD_LINE = Math.round(H * 0.68);
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+    skyGrad.addColorStop(0.00, "#140c28");
+    skyGrad.addColorStop(0.22, "#4a2048");
+    skyGrad.addColorStop(0.42, "#c24a42");
+    skyGrad.addColorStop(0.62, "#ee8a48");
+    skyGrad.addColorStop(0.78, "#f6c48a");
+    skyGrad.addColorStop(1.00, "#dca078");
+
+    vignette = ctx.createRadialGradient(W * 0.38, H * 0.42, Math.min(W, H) * 0.35, W / 2, H * 0.55, Math.max(W, H) * 0.82);
+    vignette.addColorStop(0, "rgba(20, 8, 16, 0)");
+    vignette.addColorStop(1, "rgba(18, 6, 12, 0.48)");
+
+    sunSprite = makeSunSprite();
+    initStars();
+    initClouds();
+    initSeaClouds();
+    initRays();
+    initPetals();
+    initFireflies();
+    initCranes();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function drawSky(t) {
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const s of stars) {
+      const fade = 1 - Math.min(1, s.y / (H * 0.38));
+      const a = (0.2 + 0.7 * (0.5 + 0.5 * Math.sin(t * s.sp + s.tw))) * fade;
+      ctx.globalAlpha = a * 0.65;
+      ctx.fillStyle = "#ffe8d0";
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawPeaks(t) {
+    const step = 8;
+    for (const m of PEAKS) {
+      const baseY = H * m.base;
+      const amp = H * m.amp;
+      const grad = ctx.createLinearGradient(0, baseY - amp, 0, H);
+      grad.addColorStop(0, m.top);
+      grad.addColorStop(1, m.bot);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(-4, H + 2);
+      for (let x = -4; x <= W + step; x += step) {
+        const n = fbm(x * m.freq + m.seed + t * m.drift, m.seed * 1.7, 4);
+        ctx.lineTo(x, baseY + (n - 0.5) * 2 * amp);
+      }
+      ctx.lineTo(W + 4, H + 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function drawSun(t) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const haloR = SUN_R * 7.5;
+    const halo = ctx.createRadialGradient(SUN_X, SUN_Y, SUN_R * 0.3, SUN_X, SUN_Y, haloR);
+    halo.addColorStop(0, "rgba(255, 230, 160, 0.55)");
+    halo.addColorStop(0.22, "rgba(255, 150, 70, 0.22)");
+    halo.addColorStop(0.55, "rgba(255, 80, 50, 0.08)");
+    halo.addColorStop(1, "rgba(200, 40, 60, 0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(SUN_X - haloR, SUN_Y - haloR, haloR * 2, haloR * 2);
+    ctx.restore();
+
+    const s = SUN_R * 2.4;
+    ctx.drawImage(sunSprite, SUN_X - s / 2, SUN_Y - s / 2, s, s);
+  }
+
+  function wrapAng(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+
+  function drawRays(t) {
+    const reach = Math.hypot(W, H);
+    const toMouse = mouse.presence > 0.01
+      ? Math.atan2(mouse.y - SUN_Y, mouse.x - SUN_X)
+      : 0;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const r of rays) {
+      const breath = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.35 + r.pulse));
+      let ang = r.ang + 0.04 * Math.sin(t * 0.08 + r.seed);
+      let pull = 0;
+      if (mouse.glow > 0.004) {
+        const dAng = wrapAng(toMouse - ang);
+        pull = mouse.glow * Math.exp(-(dAng * dAng) / 0.55);
+        ang += dAng * pull * 0.28;
+      }
+      const spread = r.spread * (1 + pull * 0.5);
+      const len = reach * r.len * (0.85 + 0.2 * breath) * (1 + pull * 0.18);
+      const alpha = (0.045 + pull * 0.09) * breath;
+
+      const c1x = SUN_X + Math.cos(ang - spread) * SUN_R * 0.4;
+      const c1y = SUN_Y + Math.sin(ang - spread) * SUN_R * 0.4;
+      const c2x = SUN_X + Math.cos(ang + spread) * SUN_R * 0.4;
+      const c2y = SUN_Y + Math.sin(ang + spread) * SUN_R * 0.4;
+      const e1x = SUN_X + Math.cos(ang - spread * 0.35) * len;
+      const e1y = SUN_Y + Math.sin(ang - spread * 0.35) * len;
+      const e2x = SUN_X + Math.cos(ang + spread * 0.35) * len;
+      const e2y = SUN_Y + Math.sin(ang + spread * 0.35) * len;
+
+      const rg = ctx.createLinearGradient(SUN_X, SUN_Y, SUN_X + Math.cos(ang) * len, SUN_Y + Math.sin(ang) * len);
+      rg.addColorStop(0, `rgba(255, 230, 170, ${alpha * 1.6})`);
+      rg.addColorStop(0.25, `rgba(255, 170, 80, ${alpha})`);
+      rg.addColorStop(1, "rgba(255, 90, 50, 0)");
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.moveTo(c1x, c1y);
+      ctx.lineTo(e1x, e1y);
+      ctx.lineTo(e2x, e2y);
+      ctx.lineTo(c2x, c2y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawClouds(t, dt) {
+    ctx.save();
+    for (const m of clouds) {
+      m.x += m.speed * dt * 60;
+      if (m.x - m.w > W) m.x = -m.w;
+      const wob = fbm(m.seed, t * 0.05 + m.seed, 2);
+      const y = m.y + (wob - 0.5) * 22;
+      ctx.globalAlpha = m.alpha * (0.7 + 0.5 * wob);
+      ctx.drawImage(m.dusk ? DUSK_CLOUD : CLOUD_SPRITE, m.x - m.w / 2, y - m.h / 2, m.w, m.h);
+    }
+    ctx.restore();
+  }
+
+  function drawSeaClouds(t, dt) {
+    ctx.save();
+    for (const m of seaClouds) {
+      m.x += m.speed * dt * 60;
+      if (m.x - m.w > W) m.x = -m.w;
+      const wob = fbm(m.seed, t * 0.045 + m.seed, 2);
+      const y = m.y + (wob - 0.5) * 18;
+      ctx.globalAlpha = m.alpha * (0.75 + 0.45 * wob);
+      ctx.drawImage(CLOUD_SPRITE, m.x - m.w / 2, y - m.h / 2, m.w, m.h);
+      ctx.globalAlpha = m.alpha * 0.55;
+      ctx.drawImage(CLOUD_SPRITE, m.x - m.w * 0.18, y - m.h * 0.28, m.w * 0.6, m.h * 0.75);
+    }
+    ctx.restore();
+  }
+
+  function updatePetals(t, dt) {
+    const d60 = dt * 60;
+    const vortexR = Math.max(160, Math.min(W, H) * 0.18);
+    for (const p of petals) {
+      const wind = (fbm(p.seed, t * 0.12, 2) - 0.5);
+      p.vx += wind * 0.012 * d60;
+      p.vy += 0.002 * d60;
+      if (mouse.glow > 0.004 && mouse.presence > 0.05) {
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d < vortexR) {
+          const k = (1 - d / vortexR) * mouse.glow;
+          p.vx += (-dy / d) * k * 0.22 * d60;
+          p.vy += (dx / d) * k * 0.22 * d60;
+          p.vx += (dx / d) * k * 0.08 * d60 * mouse.activity;
+          p.vy += (dy / d) * k * 0.08 * d60 * mouse.activity;
+        }
+      }
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp > 3.2) { p.vx = p.vx / sp * 3.2; p.vy = p.vy / sp * 3.2; }
+      p.x += p.vx * d60;
+      p.y += p.vy * d60;
+      p.rot += p.vr * d60;
+      p.vx *= Math.pow(0.992, d60);
+      p.vy = p.vy * Math.pow(0.995, d60) + 0.18 * (1 - Math.min(1, p.vy / 0.8)) * 0.01 * d60;
+      if (p.y > H + 20) { p.y = -20; p.x = Math.random() * W; p.vx = -0.25 + Math.random() * 0.15; }
+      if (p.x < -20) p.x = W + 20;
+      if (p.x > W + 20) p.x = -20;
+    }
+  }
+
+  function drawPetals() {
+    for (const p of petals) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha = 0.72;
+      ctx.drawImage(PETAL_SPRITE, -p.size / 2, -p.size / 2, p.size, p.size * 1.15);
+      ctx.restore();
+    }
+  }
+
+  function updateFireflies(t, dt) {
+    const d60 = dt * 60;
+    const scareR = Math.max(150, Math.min(W, H) * 0.18);
+    for (const f of fireflies) {
+      f.vx += (fbm(f.seed, t * 0.35, 2) - 0.5) * 0.08 * d60;
+      f.vy += (fbm(f.seed + 40, t * 0.35, 2) - 0.5) * 0.06 * d60;
+      if (mouse.inside && mouse.activity > 0.02) {
+        const dx = f.x - mouse.x, dy = f.y - mouse.y;
+        const d = Math.hypot(dx, dy);
+        if (d < scareR && d > 0.5) {
+          const k = (1 - d / scareR) * 1.35 * mouse.activity * d60;
+          f.vx += (dx / d) * k;
+          f.vy += (dy / d) * k;
+          f.flee = 1;
+        }
+      }
+      f.flee = Math.max(0, f.flee - 0.01 * d60);
+      const maxV = 0.9 + f.flee * 2.8;
+      const sp = Math.hypot(f.vx, f.vy) || 1e-6;
+      if (sp > maxV) { f.vx = f.vx / sp * maxV; f.vy = f.vy / sp * maxV; }
+      f.x += f.vx * d60;
+      f.y += f.vy * d60;
+      if (f.x < -10) f.x = W + 10;
+      if (f.x > W + 10) f.x = -10;
+      if (f.y < H * 0.12) f.vy += 0.02 * d60;
+      if (f.y > H * 0.88) f.vy -= 0.02 * d60;
+    }
+  }
+
+  function drawFireflies(t) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const f of fireflies) {
+      const a = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * f.sp + f.tw));
+      const s = f.r * (7 + f.flee * 4);
+      ctx.globalAlpha = a * 0.85;
+      ctx.drawImage(GOLD_SPRITE, f.x - s / 2, f.y - s / 2, s, s);
+    }
+    ctx.restore();
+  }
+
+  function updateCranes(t, dt) {
+    const d60 = dt * 60;
+    const ax = W * (0.55 + 0.22 * Math.sin(t * 0.04));
+    const ay = H * (0.22 + 0.08 * Math.sin(t * 0.03 + 1));
+    const scareR = Math.max(180, Math.min(W, H) * 0.22);
+    for (const b of cranes) {
+      b.vx += (ax - b.x) * 0.00035 * d60;
+      b.vy += (ay - b.y) * 0.0005 * d60;
+      b.vx += (fbm(b.seed, t * 0.22, 2) - 0.5) * 0.06 * d60;
+      b.vy += (fbm(b.seed + 20, t * 0.22, 2) - 0.5) * 0.04 * d60;
+      if (mouse.inside && mouse.activity > 0.02) {
+        const dx = b.x - mouse.x, dy = b.y - mouse.y;
+        const d = Math.hypot(dx, dy);
+        if (d < scareR && d > 0.5) {
+          const k = (1 - d / scareR) * 1.4 * mouse.activity * d60;
+          b.vx += (dx / d) * k;
+          b.vy += (dy / d) * k * 0.8;
+          b.flee = 1;
+        }
+      }
+      b.flee = Math.max(0, b.flee - 0.007 * d60);
+      const maxV = 1.1 + b.flee * 2.6;
+      const sp = Math.hypot(b.vx, b.vy) || 1e-6;
+      if (sp > maxV) { b.vx = b.vx / sp * maxV; b.vy = b.vy / sp * maxV; }
+      b.x += b.vx * d60;
+      b.y += b.vy * d60;
+      if (b.x < -40) b.x = W + 40;
+      if (b.x > W + 40) b.x = -40;
+      if (b.y < H * 0.08) b.vy += 0.025 * d60;
+      if (b.y > H * 0.48) b.vy -= 0.025 * d60;
+      b.phase += (0.12 + b.flee * 0.18 + sp * 0.025) * d60;
+    }
+  }
+
+  function drawCranes() {
+    ctx.save();
+    ctx.fillStyle = "rgba(28, 16, 22, 0.82)";
+    ctx.strokeStyle = "rgba(28, 16, 22, 0.82)";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const b of cranes) {
+      const s = b.size;
+      const flap = Math.sin(b.phase);
+      const lift = flap * s * 0.55;
+      const tilt = Math.atan2(b.vy, b.vx) * 0.35;
+      const dir = b.vx >= 0 ? 1 : -1;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(tilt);
+      ctx.scale(dir, 1);
+      ctx.lineWidth = Math.max(1.2, s * 0.08);
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.15, 0);
+      ctx.quadraticCurveTo(s * 0.1, -s * 0.12 - Math.abs(lift) * 0.2, s * 0.95, -lift);
+      ctx.moveTo(-s * 0.15, 0);
+      ctx.quadraticCurveTo(s * 0.05, s * 0.08 - Math.abs(lift) * 0.1, s * 0.7, lift * 0.55);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(-s * 0.08, 0, s * 0.28, s * 0.09, -0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.32, -s * 0.02);
+      ctx.quadraticCurveTo(-s * 0.52, -s * 0.22, -s * 0.62, -s * 0.08);
+      ctx.lineWidth = Math.max(1, s * 0.07);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function updateMouse(dt) {
+    const d60 = dt * 60;
+    mouse.x += (mouse.tx - mouse.x) * Math.min(1, 0.12 * d60);
+    mouse.y += (mouse.ty - mouse.y) * Math.min(1, 0.12 * d60);
+    mouse.activity = Math.max(0, mouse.activity - 0.012 * d60);
+    const act = mouse.inside ? mouse.activity : 0;
+    const gRate = act > mouse.glow ? 0.030 : 0.016;
+    mouse.glow += (act - mouse.glow) * Math.min(1, gRate * d60);
+    const pTarget = mouse.inside ? 1 : 0;
+    const pRate = pTarget > mouse.presence ? 0.045 : 0.030;
+    mouse.presence += (pTarget - mouse.presence) * Math.min(1, pRate * d60);
+
+    const vx = mouse.x - mouse.px, vy = mouse.y - mouse.py;
+    const speed = Math.hypot(vx, vy);
+    mouse.px = mouse.x; mouse.py = mouse.y;
+
+    if (mouse.inside && speed > 0.5 && trail.length < 160) {
+      const nf = Math.min(4, 1 + (speed / 6) | 0) * (0.2 + 0.8 * mouse.presence);
+      const n = Math.floor(nf) + (Math.random() < nf % 1 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * 10;
+        trail.push({
+          x: mouse.x + Math.cos(a) * r,
+          y: mouse.y + Math.sin(a) * r,
+          vx: -vx * 0.06 + (Math.random() - 0.5) * 0.7,
+          vy: -vy * 0.06 + (Math.random() - 0.5) * 0.7 - 0.2,
+          life: 1,
+          decay: 0.008 + Math.random() * 0.012,
+          size: 8 + Math.random() * 16,
+          kind: Math.random() < 0.35 ? 1 : 0,
+        });
+      }
+    }
+  }
+
+  function drawMouseGlow(t, dt) {
+    const d60 = dt * 60;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const p = trail[i];
+      p.life -= p.decay * d60;
+      if (p.life <= 0) { trail.splice(i, 1); continue; }
+      p.x += p.vx * d60;
+      p.y += p.vy * d60;
+      p.vx *= Math.pow(0.985, d60);
+      p.vy = p.vy * Math.pow(0.985, d60) - 0.003 * d60;
+      const s = p.size * (0.4 + p.life * 0.9);
+      ctx.globalAlpha = p.life * 0.75;
+      ctx.drawImage(p.kind ? ROSE_SPRITE : AMBER_SPRITE, p.x - s / 2, p.y - s / 2, s, s);
+    }
+
+    if (mouse.presence > 0.01 && mouse.tx > -999) {
+      const pulse = 0.85 + 0.3 * Math.sin(t * 2.0) + 0.25 * fbm(t * 0.7, 4.1, 2);
+      const R = (50 * pulse + mouse.glow * 28) * (0.55 + 0.45 * mouse.presence);
+      const core = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, R);
+      core.addColorStop(0, "rgba(255, 240, 200, 0.9)");
+      core.addColorStop(0.28, "rgba(255, 160, 70, 0.38)");
+      core.addColorStop(1, "rgba(255, 70, 40, 0)");
+      ctx.globalAlpha = (0.55 + mouse.glow * 0.45) * mouse.presence;
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, R, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let k = 0; k < 3; k++) {
+        const ang = t * (0.9 + k * 0.38) + k * 2.09;
+        const rr = R * (0.72 + 0.32 * Math.sin(t * 1.3 + k * 2));
+        const px = mouse.x + Math.cos(ang) * rr;
+        const py = mouse.y + Math.sin(ang) * rr * 0.78;
+        const s = 12 + 5 * Math.sin(t * 2.6 + k);
+        ctx.globalAlpha = 0.7 * mouse.presence;
+        ctx.drawImage(k === 1 ? ROSE_SPRITE : GOLD_SPRITE, px - s / 2, py - s / 2, s, s);
+      }
+    }
+    ctx.restore();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const t = now / 1000;
+
+    updateMouse(dt);
+    updatePetals(t, dt);
+    updateFireflies(t, dt);
+    updateCranes(t, dt);
+
+    ctx.clearRect(0, 0, W, H);
+    drawSky(t);
+    drawRays(t);
+    drawSun(t);
+    drawClouds(t, dt);
+    drawPeaks(t);
+    drawCranes();
+    drawSeaClouds(t, dt);
+    drawPetals();
+    drawFireflies(t);
+    drawMouseGlow(t, dt);
+
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, W, H);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

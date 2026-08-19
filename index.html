@@ -46,6 +46,25 @@
     color: rgba(210, 228, 224, 0.62);
     text-shadow: 0 0 12px rgba(140, 220, 210, 0.4);
   }
+  .nav {
+    position: fixed;
+    bottom: 6%;
+    left: 5%;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", serif;
+    font-size: clamp(12px, 1.1vw, 16px);
+    letter-spacing: 0.42em;
+    color: rgba(200, 228, 224, 0.5);
+    text-decoration: none;
+    text-shadow: 0 0 10px rgba(140, 220, 210, 0.35);
+    transition: color 0.6s ease, text-shadow 0.6s ease;
+    z-index: 2;
+  }
+  .nav:hover {
+    color: rgba(230, 244, 240, 0.9);
+    text-shadow: 0 0 16px rgba(150, 230, 220, 0.7);
+  }
   @keyframes breathe {
     0%, 100% { opacity: 0.85; text-shadow: 0 0 18px rgba(140,220,210,.55), 0 0 46px rgba(120,190,255,.35); }
     50%      { opacity: 1;    text-shadow: 0 0 26px rgba(170,235,220,.8),  0 0 70px rgba(140,205,255,.5);  }
@@ -58,6 +77,7 @@
   <h1>流光镜影</h1>
   <p>轻烟起处 · 燕影入画</p>
 </div>
+<a class="nav" href="muxia-yaotai.html">暮霞瑶台</a>
 
 <script>
 (() => {
